@@ -1,0 +1,8 @@
+node_modules
+.output
+.wxt
+*.log
+*.tmp
+.DS_Store
+.vscode
+.idea

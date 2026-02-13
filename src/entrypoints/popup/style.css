@@ -1,0 +1,104 @@
+:root {
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  width: 420px;
+  min-height: 560px;
+  background: radial-gradient(circle at top right, #eef8ff 0, #f6f7fa 42%, #f3f0eb 100%);
+  color: #1f2b3d;
+}
+
+.app {
+  padding: 14px;
+}
+
+h1 {
+  font-size: 18px;
+  margin: 0;
+}
+
+.card {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(17, 40, 72, 0.12);
+  border-radius: 10px;
+  padding: 10px;
+  margin-top: 10px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+label {
+  display: block;
+  font-size: 12px;
+  color: #374659;
+  margin-bottom: 2px;
+}
+
+input,
+select {
+  width: 100%;
+  border: 1px solid #bfc9d8;
+  border-radius: 8px;
+  padding: 7px;
+  font-size: 12px;
+  background: #fff;
+}
+
+button {
+  border: none;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+button.primary {
+  background: #1f5b97;
+  color: #fff;
+}
+
+button.secondary {
+  background: #e9eef4;
+  color: #1f2b3d;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.status {
+  font-size: 12px;
+  color: #284265;
+}
+
+.small {
+  font-size: 11px;
+  color: #4a5b6f;
+}
+
+.session {
+  border-top: 1px dashed #cad5e3;
+  padding-top: 7px;
+  margin-top: 7px;
+}
+
+.badge {
+  display: inline-block;
+  border-radius: 999px;
+  font-size: 11px;
+  padding: 2px 8px;
+  background: #ddeaf6;
+}
+

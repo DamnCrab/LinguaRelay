@@ -1,0 +1,27 @@
+{
+  "name": "linguarelay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "description": "YouTube live transcription and translation browser extension",
+  "scripts": {
+    "dev": "wxt",
+    "build": "wxt build",
+    "zip": "wxt zip",
+    "gateway:mock": "node tools/mock-asr-gateway.mjs",
+    "typecheck": "tsc --noEmit",
+    "lint:check": "wxt prepare && tsc --noEmit"
+  },
+  "dependencies": {
+    "vue": "^3.5.28",
+    "ws": "^8.19.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.1.36",
+    "@wxt-dev/module-vue": "^1.0.3",
+    "typescript": "^5.9.3",
+    "wxt": "^0.20.15"
+  }
+}

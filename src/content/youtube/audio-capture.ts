@@ -7,7 +7,7 @@ export class AudioCapture {
   private isRunning = false;
 
   constructor(
-    private readonly video: HTMLVideoElement,
+    private readonly media: HTMLMediaElement,
     private readonly onChunk: (chunk: ArrayBuffer, sampleRate: number) => void,
   ) {}
 
@@ -22,7 +22,7 @@ export class AudioCapture {
     }
 
     const context = new AudioCtx({ sampleRate: 48_000 });
-    const source = context.createMediaElementSource(this.video);
+    const source = context.createMediaElementSource(this.media);
     const processor = context.createScriptProcessor(4096, 1, 1);
 
     processor.onaudioprocess = (event) => {

@@ -20,6 +20,8 @@ import {
   getTranslatorKey,
 } from './engines/engine-registry';
 
+type SessionDebugLevel = 'debug' | 'info' | 'warn' | 'error';
+
 interface SessionEngines {
   asrKey: string;
   translatorKey: string;
@@ -41,6 +43,10 @@ class TabSession {
   private revision = 0;
   private reconnectCount = 0;
   private isDisposed = false;
+  private receivedAudioChunks = 0;
+  private pushedAudioChunks = 0;
+  private lastAudioDebugAt = 0;
+  private initInProgress = false;
 
   constructor(
     private readonly sessionId: string,
@@ -54,9 +60,22 @@ class TabSession {
       acquireTranslator: (key: string, create: () => TranslatorEngine) => TranslatorEngine;
       releaseTranslator: (key: string) => void;
       onClosed: (sessionId: string) => void;
+      debug: (
+        level: SessionDebugLevel,
+        scope: string,
+        message: string,
+        details?: string,
+        extra?: {
+          sessionId?: string;
+          tabId?: number;
+          frameId?: number;
+          url?: string;
+        },
+      ) => void;
     },
   ) {
     this.bindPort(port);
+    this.debug('info', 'session.lifecycle', 'session attached');
   }
 
   public getRuntimeStatus(): SessionRuntimeStatus {
@@ -111,6 +130,7 @@ class TabSession {
       payload: { reason },
     });
 
+    this.debug('info', 'session.lifecycle', 'session disposed', reason);
     this.deps.onClosed(this.sessionId);
   }
 
@@ -174,9 +194,20 @@ class TabSession {
   }
 
   private async handleSessionInit(message: Extract<ContentToBackgroundMessage, { type: 'SESSION_INIT' }>): Promise<void> {
+    if (this.initInProgress) {
+      this.debug('warn', 'session.init', 'duplicate SESSION_INIT ignored');
+      return;
+    }
+    this.initInProgress = true;
     this.refreshHeartbeat();
 
     if (message.version !== VT_CHANNEL_VERSION) {
+      this.debug(
+        'error',
+        'session.init',
+        'version mismatch',
+        `expected=${VT_CHANNEL_VERSION}, got=${message.version}`,
+      );
       this.safePost({
         type: 'SESSION_ERROR',
         payload: {
@@ -186,10 +217,12 @@ class TabSession {
         },
       });
       await this.dispose('version_mismatch');
+      this.initInProgress = false;
       return;
     }
 
     if (!message.payload.isLive) {
+      this.debug('error', 'session.init', 'stream is not live');
       this.safePost({
         type: 'SESSION_ERROR',
         payload: {
@@ -199,11 +232,19 @@ class TabSession {
         },
       });
       await this.dispose('non_live');
+      this.initInProgress = false;
       return;
     }
 
     this.context = message.payload;
     this.settings = await this.deps.loadSettings();
+    this.debug(
+      'info',
+      'session.init',
+      'settings loaded',
+      `asr=${this.settings.asr.mode} translation=${this.settings.translation.enabled}`,
+      { url: this.context.url },
+    );
 
     const asrKey = getAsrEngineKey(this.settings.asr);
     const translatorKey = getTranslatorKey(this.settings.translation);
@@ -220,32 +261,73 @@ class TabSession {
       translator,
     };
 
-    await asr.initialize(this.context, {
-      onSegment: (segment) => {
-        void this.handleAsrSegment(segment.text, segment.isFinal, segment.language, segment.startMs, segment.endMs);
-      },
-      onError: (error) => {
-        this.safePost({ type: 'SESSION_ERROR', payload: error });
-        if (error.fatal) {
-          void this.dispose(error.code);
-        }
-      },
-      onStats: (stats) => {
-        const reconnect = stats.reconnectCount;
-        if (typeof reconnect === 'number') {
-          this.reconnectCount = reconnect;
-        }
+    let fatalInitError = false;
+    try {
+      await asr.initialize(this.context, {
+        onSegment: (segment) => {
+          void this.handleAsrSegment(
+            segment.text,
+            segment.isFinal,
+            segment.language,
+            segment.startMs,
+            segment.endMs,
+          );
+        },
+        onError: (error) => {
+          this.safePost({ type: 'SESSION_ERROR', payload: error });
+          this.debug(
+            error.fatal ? 'error' : 'warn',
+            'session.asr',
+            `ASR error: ${error.code}`,
+            error.message,
+          );
+          if (error.fatal) {
+            fatalInitError = true;
+            this.state = 'error';
+            void this.dispose(error.code);
+          }
+        },
+        onStats: (stats) => {
+          const reconnect = stats.reconnectCount;
+          if (typeof reconnect === 'number') {
+            this.reconnectCount = reconnect;
+          }
 
-        this.safePost({
-          type: 'SESSION_STATS',
-          payload: {
-            droppedAudioChunks: this.droppedAudioChunks,
-            pendingAudioChunks: this.pendingAudioChunks.length,
-            reconnectCount: this.reconnectCount,
-          },
-        });
-      },
-    });
+          this.safePost({
+            type: 'SESSION_STATS',
+            payload: {
+              droppedAudioChunks: this.droppedAudioChunks,
+              pendingAudioChunks: this.pendingAudioChunks.length,
+              reconnectCount: this.reconnectCount,
+            },
+          });
+        },
+      });
+    } catch (error) {
+      this.safePost({
+        type: 'SESSION_ERROR',
+        payload: {
+          code: 'ASR_INIT_FAILED',
+          message: error instanceof Error ? error.message : 'ASR initialize failed',
+          fatal: true,
+        },
+      });
+      this.debug(
+        'error',
+        'session.asr',
+        'ASR initialize threw',
+        error instanceof Error ? error.stack ?? error.message : String(error),
+      );
+      this.state = 'error';
+      await this.dispose('asr_init_failed');
+      this.initInProgress = false;
+      return;
+    }
+
+    if (this.isDisposed || fatalInitError) {
+      this.initInProgress = false;
+      return;
+    }
 
     this.state = 'running';
     this.safePost({
@@ -255,6 +337,8 @@ class TabSession {
         engine: asr.key,
       },
     });
+    this.debug('info', 'session.init', 'session ready', asr.key);
+    this.initInProgress = false;
   }
 
   private async handleAudioChunk(payload: {
@@ -276,9 +360,18 @@ class TabSession {
     const maxQueue = this.settings.runtime.maxPendingAudioChunks;
     if (this.pendingAudioChunks.length >= maxQueue) {
       this.droppedAudioChunks += 1;
+      if (this.droppedAudioChunks % 10 === 0) {
+        this.debug(
+          'warn',
+          'session.audio',
+          'audio chunks dropped',
+          `dropped=${this.droppedAudioChunks} queue=${this.pendingAudioChunks.length}`,
+        );
+      }
       return;
     }
 
+    this.receivedAudioChunks += 1;
     this.pendingAudioChunks.push({
       sampleRate: payload.sampleRate,
       channels: payload.channels,
@@ -302,8 +395,16 @@ class TabSession {
 
       try {
         await this.engines.asr.pushAudio(chunk);
+        this.pushedAudioChunks += 1;
+        this.debugAudioProgress();
       } catch (error) {
         log('warn', 'tab-session', 'failed to push audio chunk', error);
+        this.debug(
+          'warn',
+          'session.audio',
+          'failed to push audio chunk',
+          error instanceof Error ? error.message : String(error),
+        );
       }
     }
   }
@@ -334,6 +435,12 @@ class TabSession {
         });
       } catch (error) {
         log('warn', 'tab-session', 'translation failed', error);
+        this.debug(
+          'warn',
+          'session.translation',
+          'translation failed',
+          error instanceof Error ? error.message : String(error),
+        );
       }
     }
 
@@ -351,6 +458,12 @@ class TabSession {
         createdAt: Date.now(),
       },
     });
+    this.debug(
+      'debug',
+      'session.transcript',
+      `segment ${isFinal ? 'final' : 'partial'}`,
+      `chars=${text.length} lang=${language ?? 'unknown'}`,
+    );
   }
 
   private safePost(message: BackgroundToContentMessage): void {
@@ -359,6 +472,41 @@ class TabSession {
     } catch {
       void this.dispose('post_failed');
     }
+  }
+
+  private debug(
+    level: SessionDebugLevel,
+    scope: string,
+    message: string,
+    details?: string,
+    extra?: {
+      sessionId?: string;
+      tabId?: number;
+      frameId?: number;
+      url?: string;
+    },
+  ): void {
+    this.deps.debug(level, scope, message, details, {
+      sessionId: this.sessionId,
+      tabId: this.tabId,
+      frameId: this.frameId,
+      url: this.context?.url,
+      ...extra,
+    });
+  }
+
+  private debugAudioProgress(): void {
+    const now = Date.now();
+    if (now - this.lastAudioDebugAt < 1000) {
+      return;
+    }
+    this.lastAudioDebugAt = now;
+    this.debug(
+      'debug',
+      'session.audio',
+      'audio flow',
+      `received=${this.receivedAudioChunks} pushed=${this.pushedAudioChunks} queued=${this.pendingAudioChunks.length} dropped=${this.droppedAudioChunks}`,
+    );
   }
 }
 
@@ -372,16 +520,43 @@ export class SessionManager {
 
   private settingsCache: UserSettings;
 
-  private constructor(initialSettings: UserSettings) {
+  private constructor(
+    initialSettings: UserSettings,
+    private readonly debug: (
+      level: SessionDebugLevel,
+      scope: string,
+      message: string,
+      details?: string,
+      extra?: {
+        sessionId?: string;
+        tabId?: number;
+        frameId?: number;
+        url?: string;
+      },
+    ) => void,
+  ) {
     this.settingsCache = initialSettings;
     this.healthTimer = setInterval(() => {
       void this.cleanupExpiredSessions();
     }, 5_000);
   }
 
-  public static async create(): Promise<SessionManager> {
+  public static async create(
+    debug: (
+      level: SessionDebugLevel,
+      scope: string,
+      message: string,
+      details?: string,
+      extra?: {
+        sessionId?: string;
+        tabId?: number;
+        frameId?: number;
+        url?: string;
+      },
+    ) => void = () => undefined,
+  ): Promise<SessionManager> {
     const settings = await getSettings();
-    return new SessionManager(settings);
+    return new SessionManager(settings, debug);
   }
 
   public attachPort(port: chrome.runtime.Port): void {
@@ -393,10 +568,25 @@ export class SessionManager {
       return;
     }
 
+    this.debug(
+      'info',
+      'session.manager',
+      'port connected',
+      undefined,
+      { tabId, frameId, url: port.sender?.url },
+    );
+
     const sessionId = `${tabId}:${frameId}`;
     const existing = this.sessions.get(sessionId);
     if (existing) {
       existing.replacePort(port);
+      this.debug(
+        'info',
+        'session.manager',
+        'existing session port replaced',
+        sessionId,
+        { tabId, frameId, url: port.sender?.url },
+      );
       return;
     }
 
@@ -410,6 +600,13 @@ export class SessionManager {
         },
       } satisfies BackgroundToContentMessage);
       port.disconnect();
+      this.debug(
+        'warn',
+        'session.manager',
+        'rejected session: max sessions reached',
+        `${this.settingsCache.runtime.maxSessions}`,
+        { tabId, frameId, url: port.sender?.url },
+      );
       return;
     }
 
@@ -425,12 +622,21 @@ export class SessionManager {
       onClosed: (id) => {
         this.sessions.delete(id);
       },
+      debug: this.debug,
     });
 
     this.sessions.set(sessionId, session);
+    this.debug(
+      'info',
+      'session.manager',
+      'session created',
+      sessionId,
+      { tabId, frameId, url: port.sender?.url },
+    );
   }
 
   public async detachTab(tabId: number): Promise<void> {
+    this.debug('info', 'session.manager', 'detach tab', `${tabId}`);
     const tasks: Array<Promise<void>> = [];
     for (const [sessionId, session] of this.sessions) {
       if (!sessionId.startsWith(`${tabId}:`)) {

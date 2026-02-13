@@ -34,6 +34,7 @@ npm run gateway:mock
 - 在线 ASR WebSocket 引擎（网关协议）
 - LLM 翻译适配器（OpenAI-compatible）
 - Vue Popup + Options 管理界面
+- Popup 内模型下载与缓存（IndexedDB，支持进度、取消、删除）
 
 ## 目录
 
@@ -51,3 +52,4 @@ npm run gateway:mock
 
 - `local-onnx` 在当前版本仅保留接口，未启用推理 Worker。
 - 建议先通过 online-gateway 跑通端到端，再增量接入本地 ONNX/WebGPU。
+- 当前模型下载采用“适配器插件模式”：每个模型一个 `*.adapter.ts`，在适配器内定义可选精度、环境检查、下载清单与下载状态检查。

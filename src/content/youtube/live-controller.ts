@@ -11,6 +11,7 @@ import {
   YOUTUBE_HOST_PATTERN,
 } from '../../shared/constants';
 import { log } from '../../shared/logger';
+import { reportContentDebug } from '../debug-report';
 import { AudioCapture } from './audio-capture';
 import { SubtitleOverlay } from './subtitle-overlay';
 
@@ -22,7 +23,12 @@ const LIVE_SELECTORS = [
 ];
 
 export class YouTubeLiveController {
-  private readonly overlay = new SubtitleOverlay();
+  private readonly overlay = new SubtitleOverlay({
+    siteId: 'youtube',
+    title: 'LinguaRelay YouTube',
+    autoSnapSupported: true,
+    getAnchorRect: () => this.video?.getBoundingClientRect() ?? null,
+  });
   private capture: AudioCapture | null = null;
   private port: chrome.runtime.Port | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -37,6 +43,11 @@ export class YouTubeLiveController {
       return;
     }
 
+    reportContentDebug({
+      scope: 'yt-controller',
+      message: 'controller started',
+      level: 'info',
+    });
     this.overlay.attach();
     this.overlay.setStatus('等待直播检测...');
 
@@ -48,6 +59,12 @@ export class YouTubeLiveController {
   }
 
   public async dispose(reason = 'controller_dispose'): Promise<void> {
+    reportContentDebug({
+      scope: 'yt-controller',
+      message: 'controller disposed',
+      level: 'info',
+      details: reason,
+    });
     this.active = false;
     this.clearEvaluateTimer();
 
@@ -91,6 +108,10 @@ export class YouTubeLiveController {
     window.addEventListener('yt-navigate-start', () => {
       this.active = false;
       this.overlay.setStatus('页面跳转中，暂停转写...');
+      reportContentDebug({
+        scope: 'yt-controller',
+        message: 'yt-navigate-start',
+      });
       void this.stopCapture();
     });
 
@@ -166,6 +187,12 @@ export class YouTubeLiveController {
       this.active = true;
       this.startedAt = Date.now();
       this.ensurePort();
+      reportContentDebug({
+        scope: 'yt-controller',
+        message: 'session init',
+        level: 'info',
+        details: reason,
+      });
       this.overlay.setStatus(`已连接直播 (${reason})`);
       this.sendSessionInit(video);
     }
@@ -186,6 +213,11 @@ export class YouTubeLiveController {
       this.port = null;
       if (this.active) {
         this.overlay.setStatus('后台连接断开，尝试重连...');
+        reportContentDebug({
+          scope: 'yt-controller',
+          message: 'background disconnected',
+          level: 'warn',
+        });
         setTimeout(() => {
           if (!this.active) {
             return;
@@ -226,6 +258,11 @@ export class YouTubeLiveController {
       version: VT_CHANNEL_VERSION,
       payload: streamContext,
     });
+    reportContentDebug({
+      scope: 'yt-controller',
+      message: 'SESSION_INIT sent',
+      details: streamContext.url,
+    });
   }
 
   private handleBackgroundMessage(raw: unknown): void {
@@ -245,6 +282,12 @@ export class YouTubeLiveController {
       }
       case 'SESSION_ERROR': {
         this.overlay.setStatus(`错误(${message.payload.code}): ${message.payload.message}`);
+        reportContentDebug({
+          scope: 'yt-controller',
+          message: `SESSION_ERROR ${message.payload.code}`,
+          level: message.payload.fatal ? 'error' : 'warn',
+          details: message.payload.message,
+        });
         if (message.payload.fatal) {
           void this.stopCapture();
         }
@@ -270,6 +313,12 @@ export class YouTubeLiveController {
       this.port?.postMessage(message);
     } catch (error) {
       log('warn', 'yt-controller', 'failed to post message', error);
+      reportContentDebug({
+        scope: 'yt-controller',
+        message: 'post message failed',
+        level: 'warn',
+        details: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -293,12 +342,23 @@ export class YouTubeLiveController {
     try {
       await capture.start();
       this.capture = capture;
+      reportContentDebug({
+        scope: 'yt-controller',
+        message: 'audio capture started',
+        level: 'info',
+      });
       this.safePost({
         type: 'PLAYBACK_STATE',
         payload: { state: 'playing' },
       });
     } catch (error) {
       log('error', 'yt-controller', 'audio capture start failed', error);
+      reportContentDebug({
+        scope: 'yt-controller',
+        message: 'audio capture failed',
+        level: 'error',
+        details: error instanceof Error ? error.message : String(error),
+      });
       this.overlay.setStatus('音频采集启动失败，检查浏览器自动播放/音频权限');
     }
   }
@@ -311,6 +371,11 @@ export class YouTubeLiveController {
     }
 
     await capture.stop();
+    reportContentDebug({
+      scope: 'yt-controller',
+      message: 'audio capture stopped',
+      level: 'info',
+    });
     this.safePost({
       type: 'PLAYBACK_STATE',
       payload: { state: 'paused' },

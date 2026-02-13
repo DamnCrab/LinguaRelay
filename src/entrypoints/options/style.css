@@ -11,6 +11,13 @@ body {
   padding: 24px;
 }
 
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
 .panel {
   background: rgba(255, 255, 255, 0.95);
   border: 1px solid rgba(25, 42, 75, 0.14);
@@ -56,10 +63,37 @@ button {
   font-size: 13px;
 }
 
+button.secondary {
+  background: #dfe7f1;
+  color: #23324a;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
 .tip {
   font-size: 12px;
   color: #4d5d73;
   line-height: 1.5;
+}
+
+.tip-neutral {
+  color: #4d5d73;
+}
+
+.tip-success {
+  color: #1d5e3d;
+}
+
+.tip-error {
+  color: #8a1f1f;
 }
 
 @media (max-width: 860px) {

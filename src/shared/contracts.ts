@@ -16,6 +16,7 @@ export interface AsrLocalConfig {
   mode: 'local-onnx';
   model: 'whisper-large-v3-turbo' | 'whisper-large-v3-onnx';
   precision: 'q4f16' | 'q4' | 'fp16';
+  backend: 'webgpu' | 'wasm';
   language: string;
 }
 
@@ -39,10 +40,20 @@ export interface RuntimeConfig {
   maxPendingAudioChunks: number;
 }
 
+export interface UiConfig {
+  locale: string;
+}
+
+export interface ModelHubConfig {
+  huggingFaceToken?: string;
+}
+
 export interface UserSettings {
   asr: AsrConfig;
   translation: TranslationConfig;
   runtime: RuntimeConfig;
+  ui: UiConfig;
+  modelHub: ModelHubConfig;
 }
 
 export interface StreamContext {

@@ -10,7 +10,7 @@ export function getAsrEngineKey(config: AsrConfig): string {
     return `asr:gateway:${config.model}:${config.language}`;
   }
 
-  return `asr:local:${config.model}:${config.precision}:${config.language}`;
+  return `asr:local:${config.model}:${config.precision}:${config.backend}:${config.language}`;
 }
 
 export function getTranslatorKey(config: TranslationConfig): string {
@@ -32,7 +32,7 @@ export function createAsrEngine(config: AsrConfig): AsrEngine {
     });
   }
 
-  return new LocalOnnxAsrEngine(config.model, config.precision);
+  return new LocalOnnxAsrEngine(config.model, config.precision, config.backend);
 }
 
 export function createTranslator(config: TranslationConfig): TranslatorEngine {

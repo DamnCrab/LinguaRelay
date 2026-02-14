@@ -11,6 +11,7 @@ import {
 } from '../shared/constants';
 import { log } from '../shared/logger';
 import { getSettings } from '../shared/settings';
+import { decodePcm16FromMessage } from '../shared/audio-pcm-message';
 import type { AsrAudioChunk, AsrEngine, TranslatorEngine } from './engines/contracts';
 import { EnginePool } from './engines/engine-pool';
 import {
@@ -46,6 +47,7 @@ class TabSession {
   private receivedAudioChunks = 0;
   private pushedAudioChunks = 0;
   private lastAudioDebugAt = 0;
+  private lastPcmDecodeWarnAt = 0;
   private initInProgress = false;
 
   constructor(
@@ -302,6 +304,14 @@ class TabSession {
             },
           });
         },
+        onTrace: (event) => {
+          this.debug(
+            event.level,
+            `session.asr.${event.scope}`,
+            event.message,
+            event.details,
+          );
+        },
       });
     } catch (error) {
       this.safePost({
@@ -338,6 +348,14 @@ class TabSession {
       },
     });
     this.debug('info', 'session.init', 'session ready', asr.key);
+
+    if (!this.flushingAudio && this.pendingAudioChunks.length > 0) {
+      this.flushingAudio = true;
+      void this.flushAudioQueue().finally(() => {
+        this.flushingAudio = false;
+      });
+    }
+
     this.initInProgress = false;
   }
 
@@ -345,11 +363,11 @@ class TabSession {
     sessionTimestampMs: number;
     sampleRate: number;
     channels: 1;
-    pcm16: ArrayBuffer;
+    pcm16: ArrayBuffer | number[];
   }): Promise<void> {
     this.refreshHeartbeat();
 
-    if (this.state !== 'running' || !this.settings) {
+    if (!this.settings) {
       return;
     }
 
@@ -357,8 +375,28 @@ class TabSession {
       return;
     }
 
+    if (this.state !== 'running' && !this.initInProgress) {
+      return;
+    }
+
+    const pcm16 = decodePcm16FromMessage(payload.pcm16);
+    if (!pcm16) {
+      const now = Date.now();
+      if (now - this.lastPcmDecodeWarnAt > 2000) {
+        this.lastPcmDecodeWarnAt = now;
+        this.debug(
+          'warn',
+          'session.audio',
+          'invalid or empty pcm payload dropped',
+          `payloadType=${typeof payload.pcm16}`,
+        );
+      }
+      return;
+    }
+
     const maxQueue = this.settings.runtime.maxPendingAudioChunks;
     if (this.pendingAudioChunks.length >= maxQueue) {
+      this.pendingAudioChunks.shift();
       this.droppedAudioChunks += 1;
       if (this.droppedAudioChunks % 10 === 0) {
         this.debug(
@@ -368,18 +406,17 @@ class TabSession {
           `dropped=${this.droppedAudioChunks} queue=${this.pendingAudioChunks.length}`,
         );
       }
-      return;
     }
 
     this.receivedAudioChunks += 1;
     this.pendingAudioChunks.push({
       sampleRate: payload.sampleRate,
       channels: payload.channels,
-      pcm16: payload.pcm16,
+      pcm16,
       sessionTimestampMs: payload.sessionTimestampMs,
     });
 
-    if (!this.flushingAudio) {
+    if (!this.flushingAudio && (this.state === 'running' || this.initInProgress)) {
       this.flushingAudio = true;
       await this.flushAudioQueue();
       this.flushingAudio = false;
@@ -462,7 +499,9 @@ class TabSession {
       'debug',
       'session.transcript',
       `segment ${isFinal ? 'final' : 'partial'}`,
-      `chars=${text.length} lang=${language ?? 'unknown'}`,
+      `chars=${text.length} lang=${language ?? 'unknown'} text="${toDebugExcerpt(text)}"${
+        translatedText ? ` translated="${toDebugExcerpt(translatedText)}"` : ''
+      }`,
     );
   }
 
@@ -508,6 +547,14 @@ class TabSession {
       `received=${this.receivedAudioChunks} pushed=${this.pushedAudioChunks} queued=${this.pendingAudioChunks.length} dropped=${this.droppedAudioChunks}`,
     );
   }
+}
+
+function toDebugExcerpt(text: string, maxLength = 80): string {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength)}...`;
 }
 
 export class SessionManager {

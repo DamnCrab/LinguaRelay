@@ -17,6 +17,12 @@ export interface AsrCallbacks {
   onSegment: (segment: TranscriptSegment) => void;
   onError: (error: { code: string; message: string; fatal: boolean }) => void;
   onStats?: (stats: Record<string, number>) => void;
+  onTrace?: (event: {
+    level: 'debug' | 'info' | 'warn' | 'error';
+    scope: string;
+    message: string;
+    details?: string;
+  }) => void;
 }
 
 export interface AsrEngine {

@@ -14,6 +14,7 @@ import { log } from '../../shared/logger';
 import { reportContentDebug } from '../debug-report';
 import { AudioCapture } from './audio-capture';
 import { SubtitleOverlay } from './subtitle-overlay';
+import { encodePcm16ForMessage } from '../../shared/audio-pcm-message';
 
 const LIVE_SELECTORS = [
   '.ytp-live-badge',
@@ -328,13 +329,14 @@ export class YouTubeLiveController {
     }
 
     const capture = new AudioCapture(video, (pcm16, sampleRate) => {
+      const encoded = encodePcm16ForMessage(pcm16);
       this.safePost({
         type: 'AUDIO_CHUNK',
         payload: {
           sessionTimestampMs: Date.now(),
           sampleRate,
           channels: 1,
-          pcm16,
+          pcm16: encoded,
         },
       });
     });

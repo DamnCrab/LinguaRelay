@@ -1,8 +1,17 @@
 import { AUDIO_TARGET_SAMPLE_RATE } from '../../shared/constants';
 
+type SharedSourceNode = MediaElementAudioSourceNode | MediaStreamAudioSourceNode;
+
+interface SharedAudioGraph {
+  context: AudioContext;
+  source: SharedSourceNode;
+  consumers: number;
+}
+
+const SHARED_GRAPH_BY_MEDIA = new WeakMap<HTMLMediaElement, SharedAudioGraph>();
+
 export class AudioCapture {
-  private audioContext: AudioContext | null = null;
-  private sourceNode: MediaElementAudioSourceNode | null = null;
+  private sharedGraph: SharedAudioGraph | null = null;
   private processorNode: ScriptProcessorNode | null = null;
   private isRunning = false;
 
@@ -16,14 +25,8 @@ export class AudioCapture {
       return;
     }
 
-    const AudioCtx = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AudioCtx) {
-      throw new Error('AudioContext is not supported by this browser.');
-    }
-
-    const context = new AudioCtx({ sampleRate: 48_000 });
-    const source = context.createMediaElementSource(this.media);
-    const processor = context.createScriptProcessor(4096, 1, 1);
+    const sharedGraph = await getOrCreateSharedGraph(this.media);
+    const processor = sharedGraph.context.createScriptProcessor(4096, 1, 1);
 
     processor.onaudioprocess = (event) => {
       const input = event.inputBuffer.getChannelData(0);
@@ -32,15 +35,15 @@ export class AudioCapture {
       this.onChunk(buffer, AUDIO_TARGET_SAMPLE_RATE);
     };
 
-    source.connect(processor);
-    processor.connect(context.destination);
+    sharedGraph.source.connect(processor);
+    processor.connect(sharedGraph.context.destination);
 
-    if (context.state === 'suspended') {
-      await context.resume();
+    if (sharedGraph.context.state === 'suspended') {
+      await sharedGraph.context.resume();
     }
 
-    this.audioContext = context;
-    this.sourceNode = source;
+    sharedGraph.consumers += 1;
+    this.sharedGraph = sharedGraph;
     this.processorNode = processor;
     this.isRunning = true;
   }
@@ -50,18 +53,90 @@ export class AudioCapture {
       return;
     }
 
-    this.processorNode?.disconnect();
-    this.sourceNode?.disconnect();
-
-    if (this.audioContext) {
-      await this.audioContext.close();
+    const graph = this.sharedGraph;
+    const processor = this.processorNode;
+    if (graph && processor) {
+      try {
+        graph.source.disconnect(processor);
+      } catch {
+        // Ignore disconnect mismatch errors.
+      }
     }
+    processor?.disconnect();
 
     this.processorNode = null;
-    this.sourceNode = null;
-    this.audioContext = null;
+    this.sharedGraph = null;
     this.isRunning = false;
+
+    if (graph) {
+      graph.consumers = Math.max(0, graph.consumers - 1);
+      if (graph.consumers === 0 && graph.context.state === 'running') {
+        await graph.context.suspend().catch(() => undefined);
+      }
+    }
   }
+}
+
+async function getOrCreateSharedGraph(media: HTMLMediaElement): Promise<SharedAudioGraph> {
+  const existing = SHARED_GRAPH_BY_MEDIA.get(media);
+  if (existing && existing.context.state !== 'closed') {
+    return existing;
+  }
+
+  const AudioCtx = getAudioContextCtor();
+  const context = new AudioCtx({ sampleRate: 48_000 });
+  const source = createSourceNode(context, media);
+  const graph: SharedAudioGraph = {
+    context,
+    source,
+    consumers: 0,
+  };
+  SHARED_GRAPH_BY_MEDIA.set(media, graph);
+  return graph;
+}
+
+function getAudioContextCtor(): typeof AudioContext {
+  const AudioCtx =
+    window.AudioContext ||
+    (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AudioCtx) {
+    throw new Error('AudioContext is not supported by this browser.');
+  }
+  return AudioCtx;
+}
+
+function createSourceNode(
+  context: AudioContext,
+  media: HTMLMediaElement,
+): SharedSourceNode {
+  try {
+    return context.createMediaElementSource(media);
+  } catch (error) {
+    const stream = tryCaptureMediaStream(media);
+    if (stream) {
+      return context.createMediaStreamSource(stream);
+    }
+
+    throw error;
+  }
+}
+
+function tryCaptureMediaStream(media: HTMLMediaElement): MediaStream | null {
+  const mediaWithCapture = media as HTMLMediaElement & {
+    captureStream?: () => MediaStream;
+    mozCaptureStream?: () => MediaStream;
+  };
+  try {
+    if (typeof mediaWithCapture.captureStream === 'function') {
+      return mediaWithCapture.captureStream();
+    }
+    if (typeof mediaWithCapture.mozCaptureStream === 'function') {
+      return mediaWithCapture.mozCaptureStream();
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 function downsampleFloat32ToInt16(

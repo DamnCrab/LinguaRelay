@@ -40,7 +40,7 @@ const asrOnlineSchema = z.object({
 
 const asrLocalSchema = z.object({
   mode: z.literal('local-onnx'),
-  model: z.enum(['whisper-large-v3-turbo', 'whisper-large-v3-onnx']),
+  model: z.enum(['whisper-large-v3-turbo', 'whisper-large-v3-onnx', 'whisper-tiny-onnx']),
   precision: z.enum(['q4f16', 'q4', 'fp16']),
   backend: z.enum(['webgpu', 'wasm']).default('webgpu'),
   language: requiredTrimmedString,

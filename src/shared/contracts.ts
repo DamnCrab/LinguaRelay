@@ -14,7 +14,7 @@ export interface AsrOnlineConfig {
 
 export interface AsrLocalConfig {
   mode: 'local-onnx';
-  model: 'whisper-large-v3-turbo' | 'whisper-large-v3-onnx';
+  model: 'whisper-large-v3-turbo' | 'whisper-large-v3-onnx' | 'whisper-tiny-onnx';
   precision: 'q4f16' | 'q4' | 'fp16';
   backend: 'webgpu' | 'wasm';
   language: string;
@@ -90,7 +90,7 @@ export type ContentToBackgroundMessage =
         sessionTimestampMs: number;
         sampleRate: number;
         channels: 1;
-        pcm16: ArrayBuffer;
+        pcm16: ArrayBuffer | number[];
       };
     }
   | {

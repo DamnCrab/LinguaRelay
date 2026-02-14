@@ -11,6 +11,7 @@ import { getModelAdapter, getModelAdapterByModelKey } from '../shared/model-adap
 import type { PopupRequestMessage, PopupResponseMessage } from '../shared/popup-api';
 import type { StartupCheckIssue, StartupCheckResult } from '../shared/startup-checks';
 import { getSettings, setSettings } from '../shared/settings';
+import { LOCAL_ONNX_OFFSCREEN_MESSAGE_TYPE } from '../shared/offscreen-local-onnx';
 
 export default defineBackground(async () => {
   const debugStore = await DebugEventStore.create();
@@ -52,6 +53,11 @@ export default defineBackground(async () => {
   });
 
   chrome.runtime.onMessage.addListener((raw: unknown, sender, sendResponse) => {
+    const offscreenType = (raw as { type?: unknown })?.type;
+    if (offscreenType === LOCAL_ONNX_OFFSCREEN_MESSAGE_TYPE) {
+      return;
+    }
+
     const message = raw as PopupRequestMessage;
     if (!message || typeof message !== 'object' || !('type' in message)) {
       return;
@@ -381,14 +387,6 @@ async function runStartupChecks(modelCache: ModelCacheService): Promise<StartupC
         code: 'TRANSLATION_MODEL_EMPTY',
         level: 'error',
         message: 'Translation model is empty.',
-      });
-    }
-    if (!settings.translation.apiKey?.trim()) {
-      issues.push({
-        code: 'TRANSLATION_API_KEY_EMPTY',
-        level: 'warning',
-        message:
-          'Translation API key is empty. Requests may fail if your provider requires authentication.',
       });
     }
   }

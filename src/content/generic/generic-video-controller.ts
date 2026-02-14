@@ -10,6 +10,7 @@ import {
   VT_PORT_NAME,
 } from '../../shared/constants';
 import { log } from '../../shared/logger';
+import { encodePcm16ForMessage } from '../../shared/audio-pcm-message';
 import { reportContentDebug } from '../debug-report';
 import { AudioCapture } from '../youtube/audio-capture';
 import { SubtitleOverlay } from '../youtube/subtitle-overlay';
@@ -275,13 +276,14 @@ export class GenericVideoController {
     }
 
     const capture = new AudioCapture(media, (pcm16, sampleRate) => {
+      const encoded = encodePcm16ForMessage(pcm16);
       this.safePost({
         type: 'AUDIO_CHUNK',
         payload: {
           sessionTimestampMs: Date.now(),
           sampleRate,
           channels: 1,
-          pcm16,
+          pcm16: encoded,
         },
       });
     });

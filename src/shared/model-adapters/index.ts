@@ -1,8 +1,13 @@
 import type { ModelAdapter, ModelVariantSelection } from './contracts';
 import { whisperLargeV3Adapter } from './whisper-large-v3.adapter';
 import { whisperLargeV3TurboAdapter } from './whisper-large-v3-turbo.adapter';
+import { whisperTinyAdapter } from './whisper-tiny.adapter';
 
-const ADAPTERS: ModelAdapter[] = [whisperLargeV3TurboAdapter, whisperLargeV3Adapter];
+const ADAPTERS: ModelAdapter[] = [
+  whisperLargeV3TurboAdapter,
+  whisperLargeV3Adapter,
+  whisperTinyAdapter,
+];
 
 export type ModelAdapterId = (typeof ADAPTERS)[number]['id'];
 

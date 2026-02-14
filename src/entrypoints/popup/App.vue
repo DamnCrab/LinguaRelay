@@ -54,14 +54,22 @@
 
     <section class="card" v-if="startupIssues.length > 0">
       <div class="status">{{ t('startupChecks') }} ({{ startupIssues.length }})</div>
-      <div
-        class="small"
-        :class="issue.level === 'error' ? 'error-text' : ''"
-        style="margin-top: 4px"
-        v-for="issue in startupIssues"
-        :key="`${issue.code}:${issue.message}`"
-      >
-        [{{ issue.level }}] {{ issue.message }}
+      <div class="startup-issue-list">
+        <div
+          class="startup-issue"
+          :class="issue.level === 'error' ? 'startup-issue-error' : 'startup-issue-warning'"
+          v-for="issue in localizedStartupIssues"
+          :key="`${issue.code}:${issue.detail ?? issue.title}`"
+        >
+          <div class="startup-issue-head">
+            <span class="badge" :class="issue.level === 'error' ? 'startup-level-error' : 'startup-level-warning'">
+              {{ issue.levelLabel }}
+            </span>
+            <span class="startup-issue-title">{{ issue.title }}</span>
+          </div>
+          <div class="small startup-issue-guide">{{ issue.guidance }}</div>
+          <div class="small startup-issue-detail" v-if="issue.detail">{{ issue.detail }}</div>
+        </div>
       </div>
     </section>
 
@@ -139,6 +147,7 @@
             <select v-model="settings.asr.model">
               <option value="whisper-large-v3-turbo">whisper-large-v3-turbo</option>
               <option value="whisper-large-v3-onnx">whisper-large-v3-onnx</option>
+              <option value="whisper-tiny-onnx">whisper-tiny-onnx</option>
             </select>
           </div>
           <div>
@@ -380,6 +389,7 @@ import {
 } from '../../shared/content-control';
 import type { CachedModelSummary } from '../../shared/model-cache';
 import type { StartupCheckIssue } from '../../shared/startup-checks';
+import { localizeStartupCheckIssue } from '../../shared/startup-check-i18n';
 import {
   getBrowserLocales,
   resolveUiLocale,
@@ -465,6 +475,9 @@ const tabs = computed(() => [
 const validation = computed(() => (settings.value ? validateUserSettings(settings.value) : null));
 const validationErrors = computed(() => validation.value?.errors ?? []);
 const validationWarnings = computed(() => validation.value?.warnings ?? []);
+const localizedStartupIssues = computed(() =>
+  startupIssues.value.map((issue) => localizeStartupCheckIssue(uiLocale.value, issue)),
+);
 const isDirty = computed(() => {
   if (!settings.value || !savedSettingsSnapshot.value) {
     return false;
@@ -1038,8 +1051,17 @@ function getVariantScore(adapterId: string, precisionId: string): { speed: numbe
   const qualityBase =
     precisionId === 'fp16' ? 9.8 : precisionId === 'q4f16' ? 8.6 : precisionId === 'q4' ? 7.3 : 8.0;
 
-  const speedBias = adapterId === 'whisper-large-v3-turbo' ? 0.7 : -0.5;
-  const qualityBias = adapterId === 'whisper-large-v3' ? 0.5 : 0;
+  let speedBias = 0;
+  let qualityBias = 0;
+  if (adapterId === 'whisper-large-v3-turbo') {
+    speedBias = 0.7;
+  } else if (adapterId === 'whisper-large-v3') {
+    speedBias = -0.5;
+    qualityBias = 0.5;
+  } else if (adapterId === 'whisper-tiny') {
+    speedBias = 1.8;
+    qualityBias = -1.6;
+  }
 
   return {
     speed: clampScore(speedBase + speedBias),

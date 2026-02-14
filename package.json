@@ -20,6 +20,9 @@
     "ws": "^8.19.0",
     "zod": "^4.3.6"
   },
+  "overrides": {
+    "onnxruntime-web": "1.25.0-dev.20260212-1a71a5f46e"
+  },
   "devDependencies": {
     "@types/chrome": "^0.1.36",
     "@wxt-dev/module-vue": "^1.0.3",

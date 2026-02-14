@@ -196,6 +196,61 @@ button:disabled {
   color: #8a1f1f;
 }
 
+.startup-issue-list {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.startup-issue {
+  border: 1px solid #d7e0ec;
+  border-radius: 8px;
+  padding: 8px;
+  background: #f9fbfe;
+}
+
+.startup-issue-error {
+  border-color: #e7c7c7;
+  background: #fff8f8;
+}
+
+.startup-issue-warning {
+  border-color: #eadfb9;
+  background: #fffcef;
+}
+
+.startup-issue-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.startup-level-error {
+  background: #f6dede;
+  color: #7b2020;
+}
+
+.startup-level-warning {
+  background: #f3e8bf;
+  color: #6d5612;
+}
+
+.startup-issue-title {
+  font-size: 12px;
+  color: #223852;
+}
+
+.startup-issue-guide {
+  margin-top: 6px;
+  color: #2e4765;
+}
+
+.startup-issue-detail {
+  margin-top: 4px;
+  color: #5e6f83;
+}
+
 .table-toolbar {
   margin-top: 8px;
   width: 220px;

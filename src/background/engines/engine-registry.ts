@@ -32,7 +32,7 @@ export function createAsrEngine(config: AsrConfig): AsrEngine {
     });
   }
 
-  return new LocalOnnxAsrEngine(config.model, config.precision, config.backend);
+  return new LocalOnnxAsrEngine(config.model, config.precision, config.backend, config.language);
 }
 
 export function createTranslator(config: TranslationConfig): TranslatorEngine {

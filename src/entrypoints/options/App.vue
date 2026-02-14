@@ -94,6 +94,7 @@
           <select v-model="settings.asr.model">
             <option value="whisper-large-v3-turbo">whisper-large-v3-turbo</option>
             <option value="whisper-large-v3-onnx">whisper-large-v3-onnx</option>
+            <option value="whisper-tiny-onnx">whisper-tiny-onnx</option>
           </select>
         </div>
         <div>

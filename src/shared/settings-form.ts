@@ -13,6 +13,7 @@ import { DEFAULT_SETTINGS, userSettingsSchema } from './settings';
 const LOCAL_MODELS = new Set<AsrLocalConfig['model']>([
   'whisper-large-v3-turbo',
   'whisper-large-v3-onnx',
+  'whisper-tiny-onnx',
 ]);
 const LOCAL_PRECISIONS = new Set<AsrLocalConfig['precision']>(['q4f16', 'q4', 'fp16']);
 const LOCAL_BACKENDS = new Set<AsrLocalConfig['backend']>(['webgpu', 'wasm']);
@@ -219,15 +220,6 @@ function validateTranslation(
     return;
   }
 
-  if (!settings.translation.apiKey) {
-    addIssue(
-      warnings,
-      warningMap,
-      'translation.apiKey',
-      'API key is empty. Requests may fail if your provider does not allow anonymous access.',
-    );
-  }
-
   if (
     settings.translation.sourceLanguage !== 'auto' &&
     settings.translation.sourceLanguage.toLowerCase() ===
@@ -338,7 +330,11 @@ function readAsrHeaders(input: AsrConfig): Record<string, string> | undefined {
 
 function readAsrLocalModel(input: AsrConfig, fallback: AsrLocalConfig['model']): AsrLocalConfig['model'] {
   const candidate = (input as Partial<Record<'model', string>>).model;
-  if (candidate === 'whisper-large-v3-turbo' || candidate === 'whisper-large-v3-onnx') {
+  if (
+    candidate === 'whisper-large-v3-turbo' ||
+    candidate === 'whisper-large-v3-onnx' ||
+    candidate === 'whisper-tiny-onnx'
+  ) {
     return candidate;
   }
   return fallback;

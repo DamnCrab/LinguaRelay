@@ -9,7 +9,7 @@ export default defineConfig({
     short_name: 'LinguaRelay',
     description:
       'Real-time transcription and translation overlay for YouTube live streams.',
-    permissions: ['storage', 'tabs'],
+    permissions: ['storage', 'tabs', 'offscreen'],
     host_permissions: ['*://*.youtube.com/*', 'https://*/*', 'http://*/*'],
     optional_host_permissions: ['https://*/*', 'http://*/*'],
     action: {
@@ -25,6 +25,9 @@ export default defineConfig({
         id: 'linguarelay@example.com',
         strict_min_version: '121.0',
       },
+    },
+    content_security_policy: {
+      extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';",
     },
   },
   webExt: {

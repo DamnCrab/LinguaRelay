@@ -47,6 +47,13 @@ interface DownloadSnapshot {
   updatedAt: number;
 }
 
+interface PlannedDownloadFile {
+  file: ModelDownloadFileInput;
+  fileName: string;
+  resolvedUrl?: string;
+  expectedBytes: number;
+}
+
 interface DownloadAuthContext {
   huggingFaceToken?: string;
 }
@@ -78,6 +85,56 @@ export class ModelCacheService {
     return rows
       .map((row) => ({ ...row }))
       .sort((a, b) => a.fileName.localeCompare(b.fileName));
+  }
+
+  public async readModelFile(modelId: string, fileName: string): Promise<ArrayBuffer | null> {
+    const normalizedModelId = modelId.trim();
+    const normalizedFileName = fileName.trim();
+    if (!normalizedModelId || !normalizedFileName) {
+      return null;
+    }
+
+    const db = await this.getDb();
+    const tx = db.transaction([FILES_STORE, CHUNKS_STORE], 'readonly');
+
+    const file = await requestToPromise<FileRow | undefined>(
+      tx.objectStore(FILES_STORE).get([normalizedModelId, normalizedFileName]),
+    );
+    if (!file) {
+      await waitForTransaction(tx);
+      return null;
+    }
+
+    const chunkIndex = tx.objectStore(CHUNKS_STORE).index(CHUNKS_BY_MODEL_FILE_INDEX);
+    const chunks = await requestToPromise<ChunkRow[]>(
+      chunkIndex.getAll(IDBKeyRange.only([normalizedModelId, normalizedFileName])),
+    );
+    await waitForTransaction(tx);
+
+    if (!chunks.length) {
+      return null;
+    }
+
+    chunks.sort((a, b) => a.index - b.index);
+
+    let total = 0;
+    for (const chunk of chunks) {
+      total += chunk.data.byteLength;
+    }
+
+    if (total <= 0) {
+      return null;
+    }
+
+    const merged = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      const view = new Uint8Array(chunk.data);
+      merged.set(view, offset);
+      offset += view.byteLength;
+    }
+
+    return merged.buffer;
   }
 
   public async deleteModel(modelId: string): Promise<void> {
@@ -163,11 +220,18 @@ export class ModelCacheService {
   private async runDownload(request: ModelDownloadRequest, controller: AbortController): Promise<void> {
     const startedAt = Date.now();
     const auth = await this.loadDownloadAuthContext();
+    const plannedFiles = await this.planDownloadFiles(
+      request.modelId,
+      request.files,
+      controller.signal,
+      auth,
+    );
+    const plannedTotalBytes = plannedFiles.reduce((sum, item) => sum + item.expectedBytes, 0);
     const snapshot: DownloadSnapshot = {
       modelId: request.modelId,
-      totalBytes: 0,
+      totalBytes: plannedTotalBytes,
       downloadedBytes: 0,
-      fileCount: request.files.length,
+      fileCount: plannedFiles.length,
       completedFiles: 0,
       updatedAt: startedAt,
     };
@@ -178,9 +242,9 @@ export class ModelCacheService {
     await this.upsertModel({
       modelId: request.modelId,
       state: 'downloading',
-      fileCount: request.files.length,
+      fileCount: snapshot.fileCount,
       completedFiles: 0,
-      totalBytes: 0,
+      totalBytes: snapshot.totalBytes,
       downloadedBytes: 0,
       updatedAt: startedAt,
       errorMessage: undefined,
@@ -189,9 +253,9 @@ export class ModelCacheService {
     this.throwIfDownloadCancelled(request.modelId, controller.signal);
 
     try {
-      for (const file of request.files) {
+      for (const plannedFile of plannedFiles) {
         this.throwIfDownloadCancelled(request.modelId, controller.signal);
-        await this.downloadSingleFile(request.modelId, file, snapshot, controller.signal, auth);
+        await this.downloadSingleFile(request.modelId, plannedFile, snapshot, controller.signal, auth);
       }
       this.throwIfDownloadCancelled(request.modelId, controller.signal);
 
@@ -233,20 +297,93 @@ export class ModelCacheService {
     }
   }
 
+  private async planDownloadFiles(
+    modelId: string,
+    files: ModelDownloadFileInput[],
+    signal: AbortSignal,
+    auth: DownloadAuthContext,
+  ): Promise<PlannedDownloadFile[]> {
+    const planned: PlannedDownloadFile[] = [];
+
+    for (const file of files) {
+      const fileName = file.fileName ?? deriveFileName(file.url);
+      this.throwIfDownloadCancelled(modelId, signal);
+
+      const metadata = await this.probeModelFileWithFallback(file, signal, auth, fileName);
+      planned.push({
+        file,
+        fileName,
+        resolvedUrl: metadata.resolvedUrl,
+        expectedBytes: metadata.sizeBytes,
+      });
+    }
+
+    return planned;
+  }
+
+  private async probeModelFileWithFallback(
+    file: ModelDownloadFileInput,
+    signal: AbortSignal,
+    auth: DownloadAuthContext,
+    fileName: string,
+  ): Promise<{ resolvedUrl?: string; sizeBytes: number }> {
+    const urls = dedupeUrls([file.url, ...(file.fallbackUrls ?? [])]);
+    let lastResponse: Response | null = null;
+
+    for (const url of urls) {
+      const response = await this.fetchModelFileMetadata(url, signal, auth);
+      lastResponse = response;
+
+      if (response.ok) {
+        return {
+          resolvedUrl: url,
+          sizeBytes:
+            parseByteCount(response.headers.get('content-length')) ||
+            parseContentRangeTotal(response.headers.get('content-range')),
+        };
+      }
+
+      if (response.status === 401 && isHuggingFaceUrl(url)) {
+        const reason = auth.huggingFaceToken
+          ? 'Hugging Face rejected current token. Verify token permission and repository access.'
+          : 'Hugging Face requires authentication in current environment. Set Model Hub -> Hugging Face Token in settings.';
+        throw new Error(`Failed to download ${fileName}: HTTP 401 (${reason})`);
+      }
+
+      if (response.status !== 404 && response.status !== 405) {
+        return { resolvedUrl: url, sizeBytes: 0 };
+      }
+    }
+
+    if (lastResponse?.status === 404) {
+      // Keep download behavior tolerant; actual GET still retries with fallbacks.
+      return { sizeBytes: 0 };
+    }
+
+    return { sizeBytes: 0 };
+  }
+
   private async downloadSingleFile(
     modelId: string,
-    file: ModelDownloadFileInput,
+    plannedFile: PlannedDownloadFile,
     snapshot: DownloadSnapshot,
     signal: AbortSignal,
     auth: DownloadAuthContext,
   ): Promise<void> {
     this.throwIfDownloadCancelled(modelId, signal);
-    const fileName = file.fileName ?? deriveFileName(file.url);
+    const fileName = plannedFile.fileName;
+    const file = plannedFile.file;
 
     await this.deleteFileData(modelId, fileName);
     this.throwIfDownloadCancelled(modelId, signal);
 
-    const resolved = await this.fetchModelFileWithFallback(file, signal, auth, fileName);
+    const resolved = await this.fetchModelFileWithFallback(
+      file,
+      signal,
+      auth,
+      fileName,
+      plannedFile.resolvedUrl,
+    );
     this.throwIfDownloadCancelled(modelId, signal);
     const response = resolved.response;
     const resolvedUrl = resolved.resolvedUrl;
@@ -260,9 +397,17 @@ export class ModelCacheService {
       throw new Error(`Failed to download ${fileName}: HTTP ${response.status}`);
     }
 
-    const contentLength = parseByteCount(response.headers.get('content-length'));
-    if (contentLength > 0) {
-      snapshot.totalBytes += contentLength;
+    const measuredContentLength =
+      parseByteCount(response.headers.get('content-length')) ||
+      parseContentRangeTotal(response.headers.get('content-range'));
+    let contentLength = plannedFile.expectedBytes;
+
+    if (measuredContentLength > 0 && measuredContentLength !== contentLength) {
+      snapshot.totalBytes += measuredContentLength - contentLength;
+      contentLength = measuredContentLength;
+    } else if (measuredContentLength > 0 && contentLength === 0) {
+      snapshot.totalBytes += measuredContentLength;
+      contentLength = measuredContentLength;
     }
 
     const now = Date.now();
@@ -464,10 +609,7 @@ export class ModelCacheService {
     signal: AbortSignal,
     auth: DownloadAuthContext,
   ): Promise<Response> {
-    const headers: Record<string, string> = {};
-    if (auth.huggingFaceToken && isHuggingFaceUrl(url)) {
-      headers.Authorization = `Bearer ${auth.huggingFaceToken}`;
-    }
+    const headers = this.buildDownloadHeaders(url, auth);
 
     return fetch(url, {
       signal,
@@ -475,13 +617,48 @@ export class ModelCacheService {
     });
   }
 
+  private async fetchModelFileMetadata(
+    url: string,
+    signal: AbortSignal,
+    auth: DownloadAuthContext,
+  ): Promise<Response> {
+    const headers = this.buildDownloadHeaders(url, auth);
+    let response = await fetch(url, {
+      method: 'HEAD',
+      signal,
+      headers: Object.keys(headers).length > 0 ? headers : undefined,
+    });
+
+    if (response.status === 405 || response.status === 501) {
+      response = await fetch(url, {
+        method: 'GET',
+        signal,
+        headers: {
+          ...headers,
+          Range: 'bytes=0-0',
+        },
+      });
+    }
+
+    return response;
+  }
+
+  private buildDownloadHeaders(url: string, auth: DownloadAuthContext): Record<string, string> {
+    const headers: Record<string, string> = {};
+    if (auth.huggingFaceToken && isHuggingFaceUrl(url)) {
+      headers.Authorization = `Bearer ${auth.huggingFaceToken}`;
+    }
+    return headers;
+  }
+
   private async fetchModelFileWithFallback(
     file: ModelDownloadFileInput,
     signal: AbortSignal,
     auth: DownloadAuthContext,
     fileName: string,
+    preferredResolvedUrl?: string,
   ): Promise<{ response: Response; resolvedUrl: string }> {
-    const urls = dedupeUrls([file.url, ...(file.fallbackUrls ?? [])]);
+    const urls = dedupeUrls([preferredResolvedUrl ?? '', file.url, ...(file.fallbackUrls ?? [])]);
     let lastResponse: Response | null = null;
 
     for (const url of urls) {
@@ -598,6 +775,24 @@ function parseByteCount(headerValue: string | null): number {
   }
 
   const value = Number.parseInt(headerValue, 10);
+  if (!Number.isFinite(value) || value <= 0) {
+    return 0;
+  }
+
+  return value;
+}
+
+function parseContentRangeTotal(headerValue: string | null): number {
+  if (!headerValue) {
+    return 0;
+  }
+
+  const match = /\/(\d+)\s*$/i.exec(headerValue.trim());
+  if (!match || !match[1]) {
+    return 0;
+  }
+
+  const value = Number.parseInt(match[1], 10);
   if (!Number.isFinite(value) || value <= 0) {
     return 0;
   }

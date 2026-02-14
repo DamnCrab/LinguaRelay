@@ -13,6 +13,7 @@ import { log } from '../../shared/logger';
 import { AudioCapture } from '../youtube/audio-capture';
 import { SubtitleOverlay } from '../youtube/subtitle-overlay';
 import { reportContentDebug } from '../debug-report';
+import { encodePcm16ForMessage } from '../../shared/audio-pcm-message';
 
 const TEST_PAGE_ATTR = 'data-linguarelay-test-page';
 const TEST_MEDIA_SELECTOR = [
@@ -306,6 +307,7 @@ export class LocalAudioTestController {
     }
 
     const capture = new AudioCapture(media, (pcm16, sampleRate) => {
+      const encoded = encodePcm16ForMessage(pcm16);
       this.audioChunkCount += 1;
       this.safePost({
         type: 'AUDIO_CHUNK',
@@ -313,7 +315,7 @@ export class LocalAudioTestController {
           sessionTimestampMs: Date.now(),
           sampleRate,
           channels: 1,
-          pcm16,
+          pcm16: encoded,
         },
       });
 
@@ -323,7 +325,7 @@ export class LocalAudioTestController {
         reportContentDebug({
           scope: 'local-test-controller',
           message: 'AUDIO_CHUNK flowing',
-          details: `count=${this.audioChunkCount} sampleRate=${sampleRate}`,
+          details: `count=${this.audioChunkCount} sampleRate=${sampleRate} samples=${encoded.length}`,
         });
       }
     });
